@@ -31,6 +31,7 @@ def get_position_data(driver, job):
     list of strings : [position, company, location, details]
     """
     full_text = ', '.join(job.text.split('\n'))
+    print(full_text)
     details = driver.find_element(by=By.ID, value="job-details").text
     try:
         [position, company, location] = job.text.split('\n')[:3]
@@ -93,4 +94,4 @@ for p in range(1, n_pages):
    
     driver.find_element(by=By.XPATH, value=f"//button[@aria-label='Page {p + 1}']").click()
 
-df_jobs.to_csv(f"linkedin-scrape_{'-'.join(keywords.split(' '))}_{date}.csv", index=False)
+df_jobs.to_csv(f"data/linkedin-scrape_{'-'.join(keywords.split(' '))}_{date}.csv", index=False)
