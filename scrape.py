@@ -9,7 +9,7 @@ from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-company = "Airbnb"
+company = "Meta"
 keywords = f"{company.lower()} data scientist"
 location = "united states"
 filter_promotion = True
@@ -35,15 +35,19 @@ def get_position_data(driver, job):
     """
     full_text = ', '.join(job.text.split('\n'))
     print(full_text)
+    if len(job.find_elements(by=By.TAG_NAME, value="time")) > 0:
+        post_date = job.find_elements(by=By.TAG_NAME, value="time")[0].text
+    else:
+        post_date = ''
     details = driver.find_element(by=By.ID, value="job-details").text
     try:
         [position, company, location] = job.text.split('\n')[:3]
 
-        return [position, company, location, full_text, details]
+        return [position, company, location, post_date, full_text, details]
 
     except:
 
-        return ['', '', '', full_text, details]
+        return ['', '', '', post_date, full_text, details]
 
 
 
@@ -92,21 +96,25 @@ for p in range(1, n_pages):
         try:
             # to the current job
             scroll_to(driver, j)
-            [position, company, location, full_text, details] = get_position_data(driver, j)
+            [position, company, location, post_date, full_text, details] = get_position_data(driver, j)
             if (filter_promotion) and (company.lower() not in full_text.lower()):
                 print('this promotion job not appended...\n')
             else:   
                 df_jobs = pd.concat([
                     df_jobs, 
                     pd.DataFrame(
-                        [[company, position, location, full_text, details]], 
-                        columns=['company', 'position', 'location', 'full_text', 'details'],
+                        [[company, position, location, post_date, full_text, details]], 
+                        columns=['company', 'position', 'location', 'post_date', 'full_text', 'details'],
                         ),
                     ])
                 print('\n')
         except:
             pass
-   
-    driver.find_element(by=By.XPATH, value=f"//button[@aria-label='Page {p + 1}']").click()
+
+    try:      
+        driver.find_element(by=By.XPATH, value=f"//button[@aria-label='Page {p + 1}']").click()
+    except:
+        print("end of job scraping.")
+        break
 
 df_jobs.to_csv(f"data/linkedin-scrape_{'-'.join(keywords.split(' '))}_{date}.csv", index=False)
