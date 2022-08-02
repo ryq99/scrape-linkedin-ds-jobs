@@ -9,13 +9,13 @@ from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
-company = "Meta"
+company = "Instacart"
 keywords = f"{company.lower()} data scientist"
 location = "united states"
 filter_promotion = True
 
 date = pd.to_datetime("today").strftime("%Y-%m-%d")
-n_pages = 20
+n_pages = 30
 
 
 def scroll_to(driver, job_list_item):
