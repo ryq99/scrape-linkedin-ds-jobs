@@ -53,8 +53,8 @@ def get_position_data(driver, job):
 
 driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
 
-email = "yrc602@gmail.com"
-password = "y0a6n0g2"
+email = None
+password = None
 #actions.login(driver, email, password)
 
 ### Go to linkedin and login
