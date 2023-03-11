@@ -83,10 +83,12 @@ firefox_options.add_argument('--headless')
 # Create custom service object
 firefox_service = FirefoxService(executable_path='/usr/local/bin/geckodriver')
 
+
 # Create Firefox driver instance
 #driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
 driver = webdriver.Firefox(service=firefox_service, options=firefox_options)
 print(f"Driver: {driver}")
+
 #actions.login(driver, email, password)
 
 ### Go to linkedin and login
@@ -161,3 +163,4 @@ for p in tqdm(range(1, n_pages)):
     except:
         print("end of job scraping.")
         break
+
