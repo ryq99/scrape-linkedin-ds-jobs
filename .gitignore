@@ -2,3 +2,4 @@
 *.pkl
 *.log
 *.ipynb_checkpoints
+config.yml
