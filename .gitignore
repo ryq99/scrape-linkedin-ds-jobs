@@ -1,4 +1,9 @@
 .DS_Store
 *.pkl
 *.log
-*.ipynb_checkpoints
+config.yml
+
+.ipynb_checkpoints
+notebook/.ipynb_checkpoints
+data/
+driver/
