@@ -26,13 +26,11 @@ WORKDIR /app
 
 COPY requirements.txt requirements.txt
 COPY config.yml config.yml 
-COPY scrape.py scrape.py 
+COPY src/ src/
 
 RUN pip install -r requirements.txt 
 
-CMD ["python", "scrape.py"]
+ENTRYPOINT ["python"]
 
-# Start VNC server
-#CMD x11vnc -display :99 -forever -rfbport 5900 -passwd 06020602
-
+# docker build --platform linux/X86_64 ds_scrape .
 #docker run -it -v "/Users/ruichenyang/projects/ds_jobs:/app" ds_scrape bash 
