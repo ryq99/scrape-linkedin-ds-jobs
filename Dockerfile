@@ -1,15 +1,6 @@
 FROM python:3.9-slim-buster 
 
-RUN apt-get update && apt-get install -y \
-    curl \
-    gcc \
-    wget \
-    gnupg \
-    libgconf-2-4 \
-    libfontconfig \
-    firefox-esr \
-    xvfb \
-    x11vnc
+RUN apt-get update && apt-get install -y bash curl gcc wget gnupg libgconf-2-4 libfontconfig firefox-esr xvfb x11vnc
 
 # Set up Firefox driver
 RUN mkdir /drivers && \
@@ -24,13 +15,8 @@ EXPOSE 5900
 
 WORKDIR /app
 
+RUN pip install -U pip
 COPY requirements.txt requirements.txt
-COPY config.yml config.yml 
 COPY src/ src/
 
-RUN pip install -r requirements.txt 
-
-ENTRYPOINT ["python"]
-
-# docker build --platform linux/X86_64 ds_scrape .
-#docker run -it -v "/Users/ruichenyang/projects/ds_jobs:/app" ds_scrape bash 
+#RUN pip install -r requirements.txt 
