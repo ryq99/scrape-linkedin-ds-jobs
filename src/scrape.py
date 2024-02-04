@@ -26,7 +26,7 @@ parser.add_argument('-c', '--company', default='')
 parser.add_argument('-t', '--title', default='data scientist')
 parser.add_argument('-l', '--location', default='united states')
 parser.add_argument('-fp', '--filter_promotion', default=True)
-parser.add_argument('-p', '--n_pages', default=10)
+parser.add_argument('-p', '--n_pages', default=30)
 company, title, location, keywords, filter_promotion, n_pages = (
     parser.parse_args().company, 
     parser.parse_args().title, 
