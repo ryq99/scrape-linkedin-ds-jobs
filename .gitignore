@@ -1,7 +1,7 @@
 .DS_Store
 *.pkl
 *.log
-config.yml
+**/*.env
 
 .ipynb_checkpoints
 notebook/.ipynb_checkpoints

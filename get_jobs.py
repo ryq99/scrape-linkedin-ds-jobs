@@ -28,11 +28,6 @@ script_processor = ScriptProcessor(
     instance_type= instance_type,
 )
 
-# script_processor.run(
-#     code="src/scrape.py", 
-#     arguments=None,
-# )
-
 # Define Steps
 step_scrape = ProcessingStep(
     name="ds-scrape",
