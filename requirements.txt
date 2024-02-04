@@ -1,0 +1,5 @@
+tqdm
+pandas
+selenium
+webdriver_manager
+boto3
