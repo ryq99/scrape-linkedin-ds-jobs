@@ -5,7 +5,6 @@ import time
 from tqdm import tqdm
 import argparse
 import pandas as pd
-import dill as pkl
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from webdriver_manager.chrome import ChromeDriverManager
@@ -15,15 +14,9 @@ from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-import yaml
-with open("config.yml", "rb") as f:
-    config = yaml.safe_load(f) 
 import boto3
-s3_client = boto3.client(
-    's3', 
-    aws_access_key_id=config['AWS_ACCESS_KEY_ID'],
-    aws_secret_access_key=config['AWS_SECRET_ACCESS_KEY'],
-    )
+s3_client = boto3.client('s3', region_name='us-west-2')
+ssm_client = boto3.client('ssm', region_name='us-west-2')
 
 date = pd.to_datetime("today").strftime("%Y-%m-%d")
 print(f"Scrape Date: {date}")
@@ -33,7 +26,7 @@ parser.add_argument('-c', '--company', default='')
 parser.add_argument('-t', '--title', default='data scientist')
 parser.add_argument('-l', '--location', default='united states')
 parser.add_argument('-fp', '--filter_promotion', default=True)
-parser.add_argument('-p', '--n_pages', default=30)
+parser.add_argument('-p', '--n_pages', default=10)
 company, title, location, keywords, filter_promotion, n_pages = (
     parser.parse_args().company, 
     parser.parse_args().title, 
@@ -85,17 +78,15 @@ firefox_service = FirefoxService(executable_path='/usr/local/bin/geckodriver')
 
 
 # Create Firefox driver instance
-#driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
-driver = webdriver.Firefox(service=firefox_service, options=firefox_options)
+driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
+#driver = webdriver.Firefox(service=firefox_service, options=firefox_options)
 print(f"Driver: {driver}")
-
-#actions.login(driver, email, password)
 
 ### Go to linkedin and login
 driver.get("https://www.linkedin.com/login")
 time.sleep(3)
-driver.find_element(by=By.ID, value="username").send_keys(config['email'])
-driver.find_element(by=By.ID, value="password").send_keys(config['password'])
+driver.find_element(by=By.ID, value="username").send_keys(ssm_client.get_parameter(Name='linkedin_user')['Parameter']['Value'])
+driver.find_element(by=By.ID, value="password").send_keys(ssm_client.get_parameter(Name='linkedin_pwd')['Parameter']['Value'])
 driver.find_element(by=By.ID, value="password").send_keys(Keys.RETURN)
 
 ### Go to jobs page
@@ -107,6 +98,7 @@ time.sleep(3)
 # insert keywords
 print("insert keywords")
 search_bars = driver.find_elements(by=By.CLASS_NAME, value="jobs-search-box__text-input")
+print(search_bars)
 search_keywords = search_bars[0]
 search_keywords.send_keys(keywords)
 search_keywords.send_keys(Keys.RETURN)
@@ -163,4 +155,3 @@ for p in tqdm(range(1, n_pages)):
     except:
         print("end of job scraping.")
         break
-
