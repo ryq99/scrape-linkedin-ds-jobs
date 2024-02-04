@@ -4,6 +4,7 @@
 **/*.env
 
 .ipynb_checkpoints
-notebook/.ipynb_checkpoints
+**/notebook/
 data/
 driver/
+config.yml
