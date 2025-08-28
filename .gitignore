@@ -1,10 +1,19 @@
 .DS_Store
 *.pkl
 *.log
+**/*.json
 **/*.env
+
+text*
+tensorflow*
 
 .ipynb_checkpoints
 **/notebook/
-data/
-driver/
-config.yml
+**/data/
+**/driver/
+**/config.yml
+**/*.zip
+**/*.csv
+
+bazel
+src/scrape_dev.py
