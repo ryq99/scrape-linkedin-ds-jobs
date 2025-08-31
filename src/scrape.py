@@ -71,28 +71,24 @@ def login(driver, user, pwd):
 
 def search_jobs(driver, title, location):
     driver.get("https://www.linkedin.com/jobs/")
-    time.sleep(5)
+    time.sleep(10)
 
-    job_input = driver.find_element(By.XPATH, "//input[@placeholder='Title, skill or Company']")
-    driver.execute_script("arguments[0].value = '';", job_input)
-    job_input.send_keys(title)
+    search_input = driver.find_element(By.XPATH, "//input[@placeholder='Describe the job you want']")
+    driver.execute_script("arguments[0].value = '';", search_input)
+    search_input.send_keys(f"{title} {location}")
 
-    location_input = driver.find_element(By.XPATH, "//input[@placeholder='City, state, or zip code']")
-    driver.execute_script("arguments[0].value = '';", location_input)
-    location_input.send_keys(location)
-
-    location_input.send_keys(Keys.RETURN)
+    search_input.send_keys(Keys.RETURN)
     time.sleep(5)
 
     return True
 
 def scrape_job_card(card):
-    job_title = card.find_element(By.CSS_SELECTOR, 'a.job-card-list__title--link > span[aria-hidden="true"]').text.strip()
-    company_name = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__subtitle span[dir="ltr"]').text.strip()
-    location = card.find_element(By.CSS_SELECTOR, 'ul.job-card-container__metadata-wrapper li span[dir="ltr"]').text.strip()
+    job_title = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__title span[aria-hidden="true"] strong').text.strip()
+    company_name = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__subtitle div[dir="ltr"]').text.strip()
+    location = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__caption div[dir="ltr"]').text.strip()
     
     try:
-        salary_element = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__metadata ul.job-card-container__metadata-wrapper span[dir="ltr"]')
+        salary_element = card.find_element(By.CSS_SELECTOR, 'div.artdeco-entity-lockup__metadata > div[dir="ltr"]')
         salary = salary_element.text.strip()
     except NoSuchElementException:
         salary = "Not available"
@@ -102,15 +98,8 @@ def scrape_job_card(card):
         logo_url = logo_element.get_attribute('src')
     except NoSuchElementException:
         logo_url = "Not available"
-    
-    try:
-        all_spans = card.find_elements(By.CSS_SELECTOR, "span.tvm__text")
-        # Get the text, which includes the date and any surrounding tags
-        top_text = ', '.join([span.text for span in all_spans if span.text.strip()])
-    except NoSuchElementException:
-        top_text = "Not available"
 
-    return job_title, company_name, location, salary, logo_url, top_text
+    return job_title, company_name, location, salary, logo_url
 
 def scrape_job_description(driver, card):
     wait = WebDriverWait(driver, 10)
@@ -118,9 +107,9 @@ def scrape_job_description(driver, card):
     time.sleep(2) 
     # Wait for the job details panel to load and get the description
     job_details_container = wait.until(EC.presence_of_element_located((By.ID, 'job-details')))
-    job_description_text = job_details_container.text
+    job_description = job_details_container.text
 
-    return job_description_text
+    return job_description
 
 def scrape_jobs(driver, num_pages=10):
     # Switch to iframe before scraping job cards
@@ -130,27 +119,26 @@ def scrape_jobs(driver, num_pages=10):
 
     all_jobs_data = []
     ith_page = 1
+    scraped_job_ids = set()
 
     while ith_page <= num_pages:
-        job_cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'li[data-occludable-job-id]')))
-        print(f"Found {len(job_cards)} jobs in page {ith_page}")
-        
-        ith_job = 0
-        scraped_job_ids = set()
-
         start_time = time.time()
         while True:
             if time.time() - start_time > 90: # assuming each page should take less than 90 seconds
                 print("Stopping after 90 seconds.")
                 break
 
+            ith_job = 0
+            job_cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.job-card-job-posting-card-wrapper[data-job-id]')))
+            print(f"Found {len(job_cards)} jobs in page {ith_page}")
+
             for card in job_cards:
-                job_id = card.get_attribute('data-occludable-job-id')
+                job_id = card.get_attribute('data-job-id')
                 
                 if job_id not in scraped_job_ids:
                     try:
-                        job_title, company_name, location, salary, logo_url, top_text = scrape_job_card(card)
-                        job_description_text = scrape_job_description(driver, card)
+                        job_title, company_name, location, salary, logo_url = scrape_job_card(card)
+                        job_description = scrape_job_description(driver, card)
                         
                         # Store the data
                         all_jobs_data.append({ 
@@ -159,9 +147,8 @@ def scrape_jobs(driver, num_pages=10):
                             "company_name": company_name,
                             "location": location, 
                             "salary": salary,
-                            "top_text": top_text,
                             "logo_url": logo_url,
-                            "job_description": job_description_text
+                            "job_description": job_description
                         })
                         
                         # Add the ID to our set to mark it as scraped
@@ -179,12 +166,8 @@ def scrape_jobs(driver, num_pages=10):
                 break
 
             # Scroll down to load the next batch of jobs
-            # Scroll to the last found job card to trigger the lazy load
-            if ith_job < len(job_cards):
-                driver.execute_script("arguments[0].scrollIntoView();", job_cards[ith_job-2])
-                time.sleep(3)  # Wait for new jobs to load
-            else:
-                break
+            driver.execute_script("arguments[0].scrollIntoView();", job_cards[-1])
+            time.sleep(2)  # wait for new jobs to load
 
         ith_page += 1
         try:
@@ -201,7 +184,7 @@ def save_to_s3(all_jobs_data, title, location):
 
     wr.s3.to_csv(
         df=pd.DataFrame(all_jobs_data),
-        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{title.replace(' ', '-').lower()}-{location.replace(' ', '-').lower()}_{pd.datetime().today.strftime('%Y-%m-%d')}.csv",
+        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{title.replace(' ', '-').lower()}-{location.replace(' ', '-').lower()}_{pd.to_datetime('today').strftime('%Y-%m-%d-%H-%M')}.csv",
         index=False
     )
     print(f"Saved {len(all_jobs_data)} jobs to S3.")
