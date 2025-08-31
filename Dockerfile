@@ -1,22 +1,25 @@
-FROM python:3.9-slim-buster 
+FROM python:3.10-slim
 
-RUN apt-get update && apt-get install -y bash curl gcc wget gnupg libgconf-2-4 libfontconfig firefox-esr xvfb x11vnc
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Set up Firefox driver
-RUN mkdir /drivers && \
-    wget -O /drivers/geckodriver https://github.com/mozilla/geckodriver/releases/download/v0.32.2/geckodriver-v0.32.2-linux64.tar.gz && \
-    tar -xvzf /drivers/geckodriver -C /drivers && \
-    chmod +x /drivers/geckodriver && \
-    mv /drivers/geckodriver /usr/local/bin/
+# Install Chromium browser and dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    ca-certificates 
 
-# Set up XVFB display
-ENV DISPLAY=:99
-EXPOSE 5900
+RUN apt-get install -y \
+    chromium \
+    chromium-driver \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/usr/bin:$PATH"
 
 WORKDIR /app
+COPY src/ src/
+COPY requirements.txt requirements.txt
 
 RUN pip install -U pip
-COPY requirements.txt requirements.txt
-COPY src/ src/
+RUN pip install --no-cache-dir -r requirements.txt
 
-#RUN pip install -r requirements.txt 
+ENTRYPOINT ["python3", "src/scrape.py"]
