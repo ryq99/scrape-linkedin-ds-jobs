@@ -26,10 +26,13 @@ user = ssm_client.get_parameter(Name='linkedin_user')['Parameter']['Value']
 pwd = ssm_client.get_parameter(Name='linkedin_pwd')['Parameter']['Value']
 
 
-def create_driver(driver_path='/usr/bin/chromedriver'):
+def create_driver(
+        driver_path='driver/chromedriver'
+        #driver_path='/usr/bin/chromedriver'
+        ):
     options = ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
+    #options.add_argument("--headless")
+    #options.add_argument("--no-sandbox")
     #options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
@@ -70,6 +73,7 @@ def login(driver, user, pwd):
     return True
 
 def search_jobs(driver, title, location):
+    time.sleep(5)
     driver.get("https://www.linkedin.com/jobs/")
     time.sleep(10)
 
@@ -102,10 +106,12 @@ def scrape_job_card(card):
     return job_title, company_name, location, salary, logo_url
 
 def scrape_job_description(driver, card):
-    wait = WebDriverWait(driver, 10)
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
+    time.sleep(1)
     card.click()
     time.sleep(2) 
     # Wait for the job details panel to load and get the description
+    wait = WebDriverWait(driver, 10)
     job_details_container = wait.until(EC.presence_of_element_located((By.ID, 'job-details')))
     job_description = job_details_container.text
 
@@ -124,28 +130,29 @@ def scrape_jobs(driver, num_pages=10):
     while ith_page <= num_pages:
         start_time = time.time()
         while True:
-            if time.time() - start_time > 90: # assuming each page should take less than 90 seconds
-                print("Stopping after 90 seconds.")
+            if time.time() - start_time > 60: # assuming each page should take less than 60 seconds
+                print("Stopping after 60 seconds.")
                 break
 
             ith_job = 0
             job_cards = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.job-card-job-posting-card-wrapper[data-job-id]')))
-            print(f"Found {len(job_cards)} jobs in page {ith_page}")
+            num_job_cards = len(job_cards)
+            print(f"Found {num_job_cards} jobs in page {ith_page}")
 
             for card in job_cards:
                 job_id = card.get_attribute('data-job-id')
-                
+
                 if job_id not in scraped_job_ids:
                     try:
                         job_title, company_name, location, salary, logo_url = scrape_job_card(card)
                         job_description = scrape_job_description(driver, card)
                         
                         # Store the data
-                        all_jobs_data.append({ 
+                        all_jobs_data.append({
                             "job_id": job_id,
                             "job_title": job_title,
                             "company_name": company_name,
-                            "location": location, 
+                            "location": location,
                             "salary": salary,
                             "logo_url": logo_url,
                             "job_description": job_description
@@ -153,21 +160,21 @@ def scrape_jobs(driver, num_pages=10):
                         
                         # Add the ID to our set to mark it as scraped
                         scraped_job_ids.add(job_id)
-                        new_jobs_found = True
                         ith_job += 1
 
                     except NoSuchElementException:
                         print(f"Error scraping card with ID {job_id}, '{job_title}' at '{company_name}' in '{location}'.")
                         continue
 
-            # If no new jobs were found in the last scrape, we've reached the end of the list
-            if not new_jobs_found:
-                print("No new jobs found. Current batch complete.")
-                break
-
             # Scroll down to load the next batch of jobs
             driver.execute_script("arguments[0].scrollIntoView();", job_cards[-1])
             time.sleep(2)  # wait for new jobs to load
+
+            # Check if new job cards have been loaded, if not, break the loop
+            job_cards_after_scroll = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.job-card-job-posting-card-wrapper[data-job-id]')))
+            if len(job_cards_after_scroll) == num_job_cards:
+                print("No new job cards loaded after scrolling, moving to next page.")
+                break
 
         ith_page += 1
         try:
@@ -196,7 +203,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='linkedin_scraper', description='scrape linkedin jobs into a .csv file')
     parser.add_argument('-c', '--company', default='')
     parser.add_argument('-t', '--title', default='Data Scientist')
-    parser.add_argument('-l', '--location', default='Seattle, WA')
+    parser.add_argument('-l', '--location', default='')
     parser.add_argument('-p', '--num_pages', default=10)
 
     args = parser.parse_args()
