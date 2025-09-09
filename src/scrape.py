@@ -72,14 +72,14 @@ def login(driver, user, pwd):
     
     return True
 
-def search_jobs(driver, title, location):
+def search_jobs(driver, prompt):
     time.sleep(5)
     driver.get("https://www.linkedin.com/jobs/")
     time.sleep(10)
 
     search_input = driver.find_element(By.XPATH, "//input[@placeholder='Describe the job you want']")
     driver.execute_script("arguments[0].value = '';", search_input)
-    search_input.send_keys(f"{title} {location}")
+    search_input.send_keys(prompt)
 
     search_input.send_keys(Keys.RETURN)
     time.sleep(5)
@@ -191,11 +191,11 @@ def scrape_jobs(driver, num_pages=10):
 
     return all_jobs_data
 
-def save_to_s3(all_jobs_data, title, location):
+def save_to_s3(all_jobs_data):
 
     wr.s3.to_csv(
         df=pd.DataFrame(all_jobs_data),
-        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{title.replace(' ', '-').lower()}-{location.replace(' ', '-').lower()}_{pd.to_datetime('today').strftime('%Y-%m-%d-%H-%M')}.csv",
+        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{pd.to_datetime('today').strftime('%Y-%m-%d-%H-%M')}.csv",
         index=False
     )
     print(f"Saved {len(all_jobs_data)} jobs to S3.")
@@ -205,18 +205,15 @@ def save_to_s3(all_jobs_data, title, location):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='linkedin_scraper', description='scrape linkedin jobs into a .csv file')
-    parser.add_argument('-c', '--company', default='')
-    parser.add_argument('-t', '--title', default='Data Scientist')
-    parser.add_argument('-l', '--location', default='')
+    parser.add_argument('-c', '--prompt', default='Data Scientist, Applied Scientist, Machine Learning Engineer at tech companies')
     parser.add_argument('-p', '--num_pages', default=10)
 
     args = parser.parse_args()
-    title, location, num_pages = f"{args.company.title()} {args.title.title()}".strip(), args.location, args.num_pages
-
+    prompt, num_pages = args.prompt, args.num_pages
     driver = create_driver()
     login(driver, user, pwd)
-    search_jobs(driver, title, location)
+    search_jobs(driver, prompt)
     all_jobs_data = scrape_jobs(driver, num_pages)
-    save_to_s3(all_jobs_data, title, location)
+    save_to_s3(all_jobs_data)
     driver.quit()
 
