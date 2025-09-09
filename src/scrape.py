@@ -15,7 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import boto3
 import s3fs
 
@@ -106,14 +106,18 @@ def scrape_job_card(card):
     return job_title, company_name, location, salary, logo_url
 
 def scrape_job_description(driver, card):
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
-    time.sleep(1)
-    card.click()
-    time.sleep(2) 
-    # Wait for the job details panel to load and get the description
-    wait = WebDriverWait(driver, 10)
-    job_details_container = wait.until(EC.presence_of_element_located((By.ID, 'job-details')))
-    job_description = job_details_container.text
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
+        time.sleep(1)
+        card.click()
+        time.sleep(2) 
+        # Wait for the job details panel to load and get the description
+        wait = WebDriverWait(driver, 10)
+        job_details_container = wait.until(EC.presence_of_element_located((By.ID, 'job-details')))
+        job_description = job_details_container.text
+    except TimeoutException:
+        print("Timeout while trying to load job details, skipping this job.")
+        job_description = "Not available"
 
     return job_description
 
