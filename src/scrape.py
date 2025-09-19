@@ -33,11 +33,13 @@ def create_driver(
     options = ChromeOptions()
     #options.add_argument("--headless")
     #options.add_argument("--no-sandbox")
-    #options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-gpu")
-    #unique_id = str(uuid.uuid4()) # Generate a unique ID for this session
+    
+    # Generate a unique ID for this session
+    #unique_id = str(uuid.uuid4())
     #user_data_dir = os.path.join(os.getcwd(), "chrome_user_data", f"profile_{unique_id}")
     #os.makedirs(user_data_dir, exist_ok=True)
     #options.add_argument(f"--user-data-dir={user_data_dir}")
