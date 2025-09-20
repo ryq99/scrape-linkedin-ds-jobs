@@ -18,13 +18,16 @@ from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import boto3
 import s3fs
+from datasets import Dataset, DatasetDict
+from huggingface_hub import HfApi, upload_file
+api = HfApi()
 
 fs = s3fs.S3FileSystem(anon=False)
 s3_client = boto3.client('s3', region_name='us-west-2')
 ssm_client = boto3.client('ssm', region_name='us-west-2')
 user = ssm_client.get_parameter(Name='linkedin_user')['Parameter']['Value']
 pwd = ssm_client.get_parameter(Name='linkedin_pwd')['Parameter']['Value']
-
+scrape_dt = pd.to_datetime('today').strftime('%Y-%m-%d-%H-%M')
 
 def create_driver(
         driver_path='driver/chromedriver'
@@ -161,7 +164,8 @@ def scrape_jobs(driver, num_pages=10):
                             "location": location,
                             "salary": salary,
                             "logo_url": logo_url,
-                            "job_description": job_description
+                            "job_description": job_description,
+                            "scrape_dt": scrape_dt,
                         })
                         
                         # Add the ID to our set to mark it as scraped
@@ -197,12 +201,31 @@ def save_to_s3(all_jobs_data):
 
     wr.s3.to_csv(
         df=pd.DataFrame(all_jobs_data),
-        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{pd.to_datetime('today').strftime('%Y-%m-%d-%H-%M')}.csv",
+        path=f"s3://datascience-linkedin-job-scrape/data/linkedin-scrape_{scrape_dt}.csv",
         index=False
     )
     print(f"Saved {len(all_jobs_data)} jobs to S3.")
 
     return True
+
+def save_to_hf(all_jobs_data):
+    all_jobs_data = pd.DataFrame(all_jobs_data)
+    for c in all_jobs_data.columns:
+        all_jobs_data[c] = all_jobs_data[c].astype(str)
+
+    dset = Dataset.from_pandas(all_jobs_data)
+    dataset_dict = DatasetDict({dset['scrape_dt'][0].replace('-', '_'): dset})
+    dataset_dict.push_to_hub("ryang2/linkedin-job-scrape")
+    api.upload_file(
+        path_or_fileobj="hf_dataset_readme.md",
+        path_in_repo="README.md",
+        repo_id="ryang2/linkedin-job-scrape",
+        repo_type="dataset"
+    )
+    print(f"Saved {len(all_jobs_data)} jobs to Hugging Face.")
+
+    return True
+
 
 
 if __name__ == "__main__":
@@ -217,5 +240,7 @@ if __name__ == "__main__":
     search_jobs(driver, prompt)
     all_jobs_data = scrape_jobs(driver, num_pages)
     save_to_s3(all_jobs_data)
+    save_to_hf(all_jobs_data)
+
     driver.quit()
 
