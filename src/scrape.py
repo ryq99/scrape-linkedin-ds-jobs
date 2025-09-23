@@ -82,7 +82,8 @@ def search_jobs(driver, prompt):
     driver.get("https://www.linkedin.com/jobs/")
     time.sleep(10)
 
-    search_input = driver.find_element(By.XPATH, "//input[@placeholder='Describe the job you want']")
+    #search_input = driver.find_element(By.XPATH, "//input[@placeholder='Describe the job you want']")
+    search_input = driver.find_element(By.XPATH, "//input[@aria-label='Search by title, skill, or company']")
     driver.execute_script("arguments[0].value = '';", search_input)
     search_input.send_keys(prompt)
 
@@ -127,10 +128,10 @@ def scrape_job_description(driver, card):
     return job_description
 
 def scrape_jobs(driver, num_pages=10):
-    # Switch to iframe before scraping job cards
     wait = WebDriverWait(driver, 10)
-    iframe = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'iframe[data-testid="interop-iframe"]')))
-    driver.switch_to.frame(iframe)
+    # Switch to iframe before scraping job cards
+    #iframe = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'iframe[data-testid="interop-iframe"]')))
+    #driver.switch_to.frame(iframe)
 
     all_jobs_data = []
     ith_page = 1
@@ -225,7 +226,6 @@ def save_to_hf(all_jobs_data):
     print(f"Saved {len(all_jobs_data)} jobs to Hugging Face.")
 
     return True
-
 
 
 if __name__ == "__main__":
