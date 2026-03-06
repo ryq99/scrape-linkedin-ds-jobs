@@ -140,8 +140,8 @@ def scrape_jobs(driver, num_pages=10):
     while ith_page <= num_pages:
         start_time = time.time()
         while True:
-            if time.time() - start_time > 60: # assuming each page should take less than 60 seconds
-                print("Stopping after 60 seconds.")
+            if time.time() - start_time > 90: # assuming each page should take less than 90 seconds
+                print("Stopping after 90 seconds.")
                 break
 
             ith_job = 0
