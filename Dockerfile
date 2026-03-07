@@ -14,10 +14,13 @@ RUN apt-get install -y \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/usr/bin:$PATH"
+ENV CHROME_BINARY="/usr/bin/chromium"
+ENV CHROMEDRIVER_PATH="/usr/bin/chromedriver"
 
 WORKDIR /app
 COPY src/ src/
 COPY requirements.txt requirements.txt
+COPY hf_dataset_readme.md hf_dataset_readme.md
 
 RUN pip install -U pip
 RUN pip install --no-cache-dir -r requirements.txt
