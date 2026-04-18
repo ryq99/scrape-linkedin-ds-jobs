@@ -15,7 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 import boto3
 import s3fs
 from datasets import Dataset, DatasetDict
@@ -150,9 +150,13 @@ def scrape_jobs(driver, num_pages=10):
             print(f"Found {num_job_cards} jobs in page {ith_page}")
 
             for card in job_cards:
-                job_id = card.get_attribute('data-job-id')
+                try:
+                    job_id = card.get_attribute('data-job-id')
+                except StaleElementReferenceException:
+                    print(f"Error getting card with ID {job_id}.")
+                    continue
 
-                if job_id not in scraped_job_ids:
+                if job_id and job_id not in scraped_job_ids:
                     try:
                         job_title, company_name, location, salary, logo_url = scrape_job_card(card)
                         job_description = scrape_job_description(driver, card)
