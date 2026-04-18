@@ -23,3 +23,5 @@ src/test_cookie.py
 **/__pycache__/
 **/chrome_user_data/
 install_chrome_driver.sh
+**/.env
+**/.env.example
