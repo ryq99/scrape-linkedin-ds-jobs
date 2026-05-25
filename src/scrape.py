@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, asdict
@@ -57,12 +58,12 @@ def get_ssm_parameter(ssm_client, name: str) -> str:
     return ssm_client.get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
 
 
-SSM_REGION         = "us-west-2"
+SSM_REGION         = os.environ["SSM_REGION"]
 SSM_LINKEDIN_USER  = "linkedin_user"
 SSM_LINKEDIN_PWD   = "linkedin_pwd"
 SSM_HF_TOKEN       = "hf_hub_access_token"
-S3_PREFIX          = "s3://datascience-linkedin-job-scrape/data"
-HF_REPO_ID         = "ryang2/linkedin-job-scrape"
+S3_PREFIX          = os.environ["S3_PREFIX"]
+HF_REPO_ID         = os.environ["HF_REPO_ID"]
 HF_README_PATH     = "hf_dataset_readme.md"
 
 
@@ -104,7 +105,7 @@ def create_driver(driver_path: Optional[str], headless: bool, chrome_binary: Opt
 
 def _logged_in(driver) -> bool:
     try:
-        driver.find_element(By.CSS_SELECTOR, "input[data-testid='typeahead-input']")
+        driver.find_element(By.CSS_SELECTOR, "[data-testid='primary-nav']")
         return True
     except NoSuchElementException:
         return False
@@ -156,13 +157,6 @@ def search_jobs(driver, prompt: str) -> None:
 # Scraping a single card + the description panel
 # ---------------------------------------------------------------------------
 
-def _safe_text(card, css: str, default: str = "Not available") -> str:
-    try:
-        return card.find_element(By.CSS_SELECTOR, css).text.strip()
-    except NoSuchElementException:
-        return default
-
-
 def _safe_attr(card, css: str, attr: str, default: str = "Not available") -> str:
     try:
         return card.find_element(By.CSS_SELECTOR, css).get_attribute(attr)
@@ -170,27 +164,53 @@ def _safe_attr(card, css: str, attr: str, default: str = "Not available") -> str
         return default
 
 
+_META_KEYWORDS = ('posted', ' ago', '·', 'easy apply', 'actively recruiting', 'promoted', 'viewed')
+
+
+def _js_click(driver, element) -> None:
+    """Scroll into view and click via JS — avoids ElementClickInterceptedException."""
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
+    time.sleep(1)
+    driver.execute_script("arguments[0].click();", element)
+
+
 def scrape_card(card) -> tuple[str, str, str, str, str]:
-    job_title = _safe_text(card, 'div.artdeco-entity-lockup__title span[aria-hidden="true"] strong')
-    company_name = _safe_text(card, 'div.artdeco-entity-lockup__subtitle div[dir="ltr"]')
-    location = _safe_text(card, 'div.artdeco-entity-lockup__caption div[dir="ltr"]')
-    salary = _safe_text(card, 'div.artdeco-entity-lockup__metadata > div[dir="ltr"]')
-    logo_url = _safe_attr(card, 'img.ivm-view-attr__img--centered', "src")
-    return job_title, company_name, location, salary, logo_url
-
-
-def scrape_description(driver, card) -> str:
+    # aria-label is "Dismiss {title} job" — only stable title source since CSS classes are obfuscated
+    aria = ""
     try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", card)
-        time.sleep(1)
-        card.click()
+        aria = card.find_element(By.CSS_SELECTOR, 'button[aria-label^="Dismiss"]').get_attribute("aria-label") or ""
+    except NoSuchElementException:
+        pass
+    job_title = re.sub(r'^Dismiss\s+|\s+job$', '', aria).strip() or "Not available"
+
+    # Card text layout: title (repeated), company, location, [salary/benefit], [metadata…]
+    title_lower = job_title.lower()
+    clean = [
+        line for line in (l.strip() for l in card.text.split('\n'))
+        if line and line.lower() not in (title_lower, title_lower + ' (verified job)', 'verified job')
+    ]
+
+    company_name = clean[0] if clean else "Not available"
+    location = clean[1] if len(clean) > 1 else "Not available"
+    salary = "Not available"
+    if len(clean) > 2 and not any(kw in clean[2].lower() for kw in _META_KEYWORDS):
+        salary = clean[2]
+
+    return job_title, company_name, location, salary, _safe_attr(card, 'img[data-loaded="true"]', "src")
+
+
+def scrape_description(driver, card, job_id: str) -> str:
+    try:
+        _js_click(driver, card)
         time.sleep(2)
         panel = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "job-details"))
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, f'[componentkey="JobDetails_AboutTheJob_{job_id}"]')
+            )
         )
         return panel.text
     except TimeoutException:
-        log.warning("Job-details panel did not load; skipping description")
+        log.warning("Job-details panel did not load for %s; skipping description", job_id)
         return "Not available"
 
 
@@ -198,15 +218,13 @@ def scrape_description(driver, card) -> str:
 # Main scraping loop
 # ---------------------------------------------------------------------------
 
-CARD_SELECTOR = 'div.job-card-job-posting-card-wrapper[data-job-id]'
+# LinkedIn now uses obfuscated CSS class names; the stable hook is the componentkey attribute.
+CARD_SELECTOR = 'div[role="button"][componentkey^="job-card-component-ref-"]'
 
 
 def iter_jobs(driver, num_pages: int, scrape_dt: str) -> Iterator[Job]:
     """Yield each unique job seen across up to ``num_pages`` pages of results."""
     wait = WebDriverWait(driver, 10)
-    iframe = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'iframe[data-testid="interop-iframe"]')))
-    driver.switch_to.frame(iframe)
-
     seen: set[str] = set()
 
     for page in range(1, num_pages + 1):
@@ -222,14 +240,14 @@ def iter_jobs(driver, num_pages: int, scrape_dt: str) -> Iterator[Job]:
 
             for card in cards:
                 try:
-                    job_id = card.get_attribute("data-job-id")
+                    job_id = (card.get_attribute("componentkey") or "").replace("job-card-component-ref-", "")
                 except StaleElementReferenceException:
                     continue
                 if not job_id or job_id in seen:
                     continue
                 try:
                     title, company, location, salary, logo = scrape_card(card)
-                    description = scrape_description(driver, card)
+                    description = scrape_description(driver, card, job_id)
                 except (NoSuchElementException, StaleElementReferenceException) as e:
                     log.warning("Skipping card %s: %s", job_id, e.__class__.__name__)
                     continue
@@ -246,16 +264,14 @@ def iter_jobs(driver, num_pages: int, scrape_dt: str) -> Iterator[Job]:
                     scrape_dt=scrape_dt,
                 )
 
-            # Lazy-load the next batch by scrolling the last visible card into view.
             driver.execute_script("arguments[0].scrollIntoView();", cards[-1])
             time.sleep(2)
             new_cards = driver.find_elements(By.CSS_SELECTOR, CARD_SELECTOR)
             if len(new_cards) == len(cards):
-                break  # No more cards on this page.
+                break
 
         try:
-            next_btn = wait.until(EC.element_to_be_clickable((By.XPATH, '//span[text()="Next"]')))
-            next_btn.click()
+            _js_click(driver, wait.until(EC.presence_of_element_located((By.XPATH, '//span[text()="Next"]'))))
             time.sleep(5)
         except TimeoutException:
             log.info("No more pages after page %d", page)

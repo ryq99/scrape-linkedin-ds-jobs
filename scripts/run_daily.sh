@@ -29,6 +29,12 @@ if [[ -d "$VENV" ]]; then
     source "$VENV/bin/activate"
 fi
 
+# ── Load environment variables ────────────────────────────────────────────────
+ENV_FILE="$PROJECT_DIR/.env"
+if [[ -f "$ENV_FILE" ]]; then
+    set -a; source "$ENV_FILE"; set +a
+fi
+
 # ── Run the scraper ───────────────────────────────────────────────────────────
 cd "$PROJECT_DIR"
 

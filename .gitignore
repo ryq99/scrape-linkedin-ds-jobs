@@ -3,6 +3,8 @@
 *.log
 **/*.json
 **/*.env
+logs/
+infra/*.plist
 
 text*
 tensorflow*
@@ -16,7 +18,7 @@ tensorflow*
 **/*.csv
 
 bazel
-#src/scrape_dev.py
+src/scrape_dev.py
 
 **/.venv
 src/test_cookie.py
@@ -24,4 +26,4 @@ src/test_cookie.py
 **/chrome_user_data/
 install_chrome_driver.sh
 **/.env
-**/.env.example
+app.py
