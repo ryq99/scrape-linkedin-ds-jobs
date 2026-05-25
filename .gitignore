@@ -26,4 +26,6 @@ src/test_cookie.py
 **/chrome_user_data/
 install_chrome_driver.sh
 **/.env
-app.pyCLAUDE.md
+app.py
+CLAUDE.md
+
