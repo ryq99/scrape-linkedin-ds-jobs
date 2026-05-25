@@ -1,1 +1,0 @@
-This project is to scrape jobs from Linkedin on a daily schedule. Scraped jobs will be save to S3 and Huggingface for downstream tasks.
