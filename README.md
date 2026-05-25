@@ -30,3 +30,11 @@ cp infra/aws.env.example infra/aws.env
 ### 5) Monitor
 - ECS task logs: CloudWatch log group in `LOG_GROUP`
 - Manual one-off run: `aws ecs run-task` using the registered task definition
+
+## Local Setup
+
+```bash
+cp .env.example .env
+# edit .env with your values
+pip install -r requirements.txt
+```
