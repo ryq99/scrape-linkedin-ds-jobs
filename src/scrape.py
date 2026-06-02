@@ -93,6 +93,12 @@ def create_driver(driver_path: Optional[str], headless: bool, chrome_binary: Opt
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument(
+        "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
 
     if driver_path:
         return webdriver.Chrome(service=ChromeService(executable_path=driver_path), options=options)
@@ -103,42 +109,77 @@ def create_driver(driver_path: Optional[str], headless: bool, chrome_binary: Opt
 # LinkedIn flow: login + search
 # ---------------------------------------------------------------------------
 
+_LOGGED_IN_URL_PREFIXES = (
+    "https://www.linkedin.com/feed",
+    "https://www.linkedin.com/jobs",
+    "https://www.linkedin.com/mynetwork",
+    "https://www.linkedin.com/in/",
+    "https://www.linkedin.com/messaging",
+)
+
+
 def _logged_in(driver) -> bool:
-    try:
-        driver.find_element(By.CSS_SELECTOR, "[data-testid='primary-nav']")
+    url = driver.current_url
+    if any(url.startswith(p) for p in _LOGGED_IN_URL_PREFIXES):
         return True
-    except NoSuchElementException:
-        return False
+    # Secondary check: global nav present (selector may vary by LinkedIn version)
+    for selector in (
+        "nav.global-nav",
+        "[data-testid='primary-nav']",
+        "#global-nav",
+    ):
+        try:
+            driver.find_element(By.CSS_SELECTOR, selector)
+            return True
+        except NoSuchElementException:
+            pass
+    return False
 
 
 def login(driver, user: str, pwd: str, wait_seconds: int = 120) -> None:
     """Sign into LinkedIn. Waits up to ``wait_seconds`` for any 2FA challenge to clear."""
-    driver.get("https://www.linkedin.com/")
-    try:
-        driver.find_element(By.LINK_TEXT, "Sign in").click()
-    except NoSuchElementException:
-        pass  # Already on a sign-in page or already authenticated.
+    driver.get("https://www.linkedin.com/login")
+    log.info("Navigated to login page (url=%s)", driver.current_url)
+
+    # If already logged in (valid session cookie), skip credential entry.
+    if _logged_in(driver):
+        log.info("Already logged in (active session)")
+        return
 
     try:
-        alt = driver.find_element(By.XPATH, "//button[contains(., 'Sign in using another account')]")
-        alt.click()
-        time.sleep(3)
-    except NoSuchElementException:
-        try:
-            driver.find_element(By.ID, "username").send_keys(user)
-            pwd_input = driver.find_element(By.ID, "password")
-            pwd_input.send_keys(pwd)
-            pwd_input.send_keys(Keys.RETURN)
-        except NoSuchElementException:
-            log.warning("Username/password fields not found; assuming session already active")
+        # LinkedIn now uses dynamic React IDs (:r0:, etc.) — select by type instead.
+        # There may be hidden duplicate fields; wait for any email input, then pick the visible one.
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
+        )
+        email_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='email']")
+        username_field = next((f for f in email_fields if f.is_displayed()), None)
+        if username_field is None:
+            raise TimeoutException("No visible email input found on login page")
+        username_field.clear()
+        username_field.send_keys(user)
+
+        pwd_fields = driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
+        pwd_input = next((f for f in pwd_fields if f.is_displayed()), None)
+        if pwd_input is None:
+            raise TimeoutException("No visible password input found on login page")
+        pwd_input.clear()
+        pwd_input.send_keys(pwd)
+        pwd_input.send_keys(Keys.RETURN)
+        log.info("Credentials submitted")
+    except TimeoutException:
+        log.warning("Login form not found at %s; current url=%s", "https://www.linkedin.com/login", driver.current_url)
 
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
         if _logged_in(driver):
-            log.info("Logged in to LinkedIn")
+            log.info("Logged in to LinkedIn (url=%s)", driver.current_url)
             return
+        current = driver.current_url
+        if "checkpoint" in current or "challenge" in current:
+            log.warning("LinkedIn security challenge detected (url=%s); waiting for manual resolution or timeout", current)
         time.sleep(2)
-    raise TimeoutException(f"Login not completed within {wait_seconds}s")
+    raise TimeoutException(f"Login not completed within {wait_seconds}s (final url={driver.current_url})")
 
 
 def search_jobs(driver, prompt: str) -> None:
@@ -316,7 +357,7 @@ def save_to_hf(df: pd.DataFrame, repo_id: str, readme_path: str, hf_token: str) 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="linkedin_scraper", description="Scrape LinkedIn jobs to S3 and Hugging Face.")
     p.add_argument(
-        "-p", "--prompt", default="AI/ML Data Scientist at tech companies", 
+        "-p", "--prompt", default="Data Scientist & Machine Learning Engineer",
         help="Search prompt describing the jobs to scrape"
         )
     p.add_argument(
