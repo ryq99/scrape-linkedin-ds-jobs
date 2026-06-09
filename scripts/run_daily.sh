@@ -39,7 +39,7 @@ fi
 cd "$PROJECT_DIR"
 
 python3 src/scrape.py \
-    --prompt "${SCRAPE_PROMPT:-AI/ML Data Scientist at tech companies}" \
+    --prompt "${SCRAPE_PROMPT:-machine learning scientist, machine learning engineer, data scientist}" \
     --num-pages "${NUM_PAGES:-10}" \
     --headless \
     "$@"   # pass any extra CLI flags straight through (e.g. --no-hf, --no-s3)

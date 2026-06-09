@@ -357,7 +357,7 @@ def save_to_hf(df: pd.DataFrame, repo_id: str, readme_path: str, hf_token: str) 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="linkedin_scraper", description="Scrape LinkedIn jobs to S3 and Hugging Face.")
     p.add_argument(
-        "-p", "--prompt", default="Data Scientist & Machine Learning Engineer",
+        "-p", "--prompt", default="machine learning scientist, machine learning engineer, data scientist",
         help="Search prompt describing the jobs to scrape"
         )
     p.add_argument(
