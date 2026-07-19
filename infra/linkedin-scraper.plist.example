@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd schedule for the LinkedIn scraper.
+
+  Install:
+    cp infra/linkedin-scraper.plist.example ~/Library/LaunchAgents/com.<you>.linkedin-scraper.plist
+    # edit the two /path/to/ds_jobs paths below, then:
+    launchctl load ~/Library/LaunchAgents/com.<you>.linkedin-scraper.plist
+-->
+<plist version="1.0">
+<dict>
+
+    <key>Label</key>
+    <string>com.user.linkedin-scraper</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/path/to/ds_jobs/scripts/run_daily.sh</string>
+    </array>
+
+    <!-- Run daily at 10:00 pm; launchd runs it on wake if the machine was asleep -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>22</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/ds_jobs/logs/scrape.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/ds_jobs/logs/scrape.log</string>
+
+</dict>
+</plist>
