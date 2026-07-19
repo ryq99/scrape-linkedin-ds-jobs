@@ -1,135 +1,148 @@
-# LinkedIn DS/ML Job Scraper
+# LinkedIn Job Scraper
 
-An automated, serverless pipeline that scrapes data science / machine learning job postings from LinkedIn once a day and publishes them as a versioned public dataset: [`ryang2/linkedin-job-scrape`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape) on Hugging Face Hub. Each run is an immutable snapshot — raw CSV in S3, a timestamped split on HF — building a longitudinal view of the DS/ML job market over time.
+A lightweight, production-grade Job scraping pipeline for data science / machine learning jobs on LinkedIn
+
+## Where to Find the Data
+**Huggingface**: [`ryang2/linkedin-job-scrape`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape) on Hugging Face Hub
 
 ## Problem & Requirements
 
-**Goal:** build a continuously growing, analysis-ready dataset of DS/ML job postings (titles, companies, locations, salaries, full descriptions) without manual effort.
+**Goal:** build a continuously growing, analysis-ready dataset of DS/ML job postings with the most complete schema the LinkedIn UI exposes — without manual effort.
 
 **Functional requirements**
-- Scrape a configurable search query daily; capture job metadata and descriptions
-- Deduplicate jobs within a run (same posting appears across pages)
-- Persist raw snapshots (audit trail) and publish a clean, versioned dataset
-- Support ad-hoc local runs with a visible browser for debugging
+- Scrape configurable search queries daily; capture card metadata, full descriptions, and every detail-page field available (salary, applicant insights, company insights, hiring team)
+- Deduplicate across runs: never re-scrape a known job; track when each posting was first/last seen
+- Persist locally (SQLite) and publish daily snapshots (S3 CSV + HF split)
 
 **Non-functional requirements**
-- Fully unattended: no machine that must be awake, no manual login per run
-- No credentials in code, images, or env files — secrets fetched at runtime
-- Resilient to LinkedIn's obfuscated/rotating DOM and bot detection
-- Near-zero idle cost: pay only for the ~minutes/day the scraper runs
-
-**Explicit non-goals:** cross-run deduplication (each snapshot is independent), real-time alerts, applying to jobs.
+- Fast: minutes per run, not tens of minutes — incremental visits, no fixed sleeps, blocked images/fonts
+- Unattended on a laptop: persistent login session (no per-run login/2FA), resumable after crash/sleep
+- Data quality as a feature: typed schema, missing = NULL, per-field completeness metrics logged every run, parsers unit-tested against captured fixtures
+- Resilient to LinkedIn DOM churn: anchor on stable `componentkey` attributes, tripwire exit codes, Playwright traces for post-mortem
 
 ## Architecture
 
+### System view
+
 ```mermaid
 flowchart LR
-    EB[EventBridge Scheduler<br/>daily 18:00 PT] -->|RunTask| ECS[ECS Fargate task<br/>Docker: Chromium + scraper]
-    SSM[SSM Parameter Store<br/>LinkedIn creds, HF token] -.->|SecureString at runtime| ECS
-    ECS -->|Selenium| LI[linkedin.com/jobs]
-    ECS -->|CSV snapshot| S3[(S3<br/>data/linkedin-scrape_&lt;ts&gt;.csv)]
-    ECS -->|parquet split per run| HF[(HF Hub dataset<br/>ryang2/linkedin-job-scrape)]
-    ECS -->|stdout/stderr| CW[CloudWatch Logs]
+    LD[launchd<br/>daily 22:00] --> M["main.py scrape"]
+    M -->|Playwright,<br/>persistent session| LI[linkedin.com]
+    M <-->|"seen? / upsert"| DB[(SQLite<br/>data/jobs.db)]
+    DB --> EX[export.py]
+    EX --> S3[(S3 CSV snapshot)]
+    EX --> HF[(HF Hub dataset)]
+    CP[chrome_user_data/<br/>login cookie] -.-> M
 ```
 
-**One scrape cycle** (`src/scrape.py:main`):
+### Run workflow
 
-1. **Credentials** — fetch LinkedIn username/password and HF token from SSM Parameter Store (SecureString, decrypted via the task role's KMS permission). Nothing sensitive ever lands on disk.
-2. **Login** — headless Chrome with anti-automation hardening; reuses an active session if one exists, otherwise submits credentials and polls up to 120s so a 2FA/checkpoint challenge can clear.
-3. **Search** — submits the query (default: `machine learning scientist, machine learning engineer, data scientist`) on `/jobs/`.
-4. **Paginate & extract** — for up to `--num-pages` pages: scroll to load cards, click each unseen card, wait for the description panel, yield a `Job` record. A `seen` set on `job_id` dedups across pages; a 90s-per-page budget bounds slow pages.
-5. **Publish** — write one CSV to S3 and push the same rows to HF Hub as a split named after the scrape timestamp (e.g. `2025_03_16_10_30`), plus a dataset README sync. Exit 1 (no uploads) if zero jobs were scraped, so a silent failure is visible to the scheduler.
+```mermaid
+flowchart TD
+    A["launchd daily 22:00<br/>or manual: python src/main.py scrape"] --> B{"Session still<br/>logged in?"}
+    B -- no --> B1["exit 2 + macOS notification<br/>fix: python src/main.py login (one time)"]
+    B -- yes --> C["Phase A — harvest cards<br/>for each query:<br/>/jobs/search-results/?keywords=…&f_TPR=r86400&start=N<br/>25 cards per page, one JS pass per page"]
+    C --> D{"Any cards<br/>found?"}
+    D -- no --> D1["exit 1 selector tripwire<br/>+ notification + saved trace"]
+    D -- yes --> E{"Diff each job_id<br/>against SQLite"}
+    E -- already known --> F["bump last_seen / times_seen<br/>no page visit — this is the speed win"]
+    E -- new --> G["Phase B — detail visit<br/>goto /jobs/view/{job_id}<br/>extract sections by componentkey<br/>2–5s jittered delay, 1 retry, daily cap"]
+    G --> H["parsers.py<br/>raw text → typed fields<br/>missing = NULL"]
+    H --> I[("SQLite upsert<br/>commit per job → crash-resumable")]
+    F --> J
+    I --> J["Export — rows first seen today"]
+    J --> K[("S3: linkedin-scrape_ts.csv")]
+    J --> L[("HF Hub: one split per run")]
+    J --> M2["Run report:<br/>counts + per-field completeness → logs/scrape.log"]
+```
+
+**Key run behaviors** (what the diagram can't show):
+
+- **Session**: Playwright opens a persistent Chromium profile (`chrome_user_data/`); the login cookie survives across runs, so scheduled runs never see a login page. Expired session → exit 2 + notification; one interactive `login` command fixes it.
+- **Resumability**: every job is committed to SQLite individually — a run killed at job 40 of 120 resumes with 80 to go, and already-stored jobs are skipped by the diff.
+- **Failure forensics**: every run records a Playwright trace; failed runs keep it in `logs/traces/` (`playwright show-trace <file>` replays every action with screenshots).
+- **Data-quality tripwire**: the per-run completeness report means a LinkedIn UI change shows up as a visible drop (e.g. `salary_min: 0.62 → 0.0`) in the next morning's log, not as silent NULLs weeks later.
 
 ## Key Design Decisions
 
 | Decision | Alternatives considered | Rationale |
 |---|---|---|
-| **Selenium + real Chromium** | LinkedIn API; `requests` + BeautifulSoup | No public jobs API. The jobs page is a JS-rendered SPA behind auth and bot detection — a real browser fingerprint (custom UA, `AutomationControlled` disabled, `enable-automation` switch removed) is the only reliable path. |
-| **Anchor on `componentkey`, not CSS classes** | CSS class / XPath selectors | LinkedIn obfuscates and rotates class names; `componentkey="job-card-component-ref-{job_id}"` and `JobDetails_AboutTheJob_{job_id}` are stable *and* carry the job ID for free — one attribute gives both the selector and the dedup key. |
-| **ECS Fargate + EventBridge Scheduler** | Lambda; always-on EC2; local cron only | Chromium needs ~5 GB memory and a full browser runtime — over Lambda's practical size/memory fit, and a run can exceed comfort on its 15-min cap. An idle EC2 costs 24/7 for a job that runs minutes/day. Fargate is pay-per-run with zero idle cost. |
-| **SSM Parameter Store for secrets** | env vars in task def; Secrets Manager | Encrypted at rest, IAM-scoped to the task role, free tier (vs Secrets Manager's per-secret cost), and keeps secrets out of task definitions and images entirely. |
-| **Immutable timestamped snapshots** | Upsert into a database | Append-only CSVs + one HF split per run give a replayable audit trail and make longitudinal analysis (posting lifetimes, salary drift, reposts) possible. Tradeoff accepted: consumers dedup across runs themselves. |
-| **Graceful degradation per field** | Fail the run on any parse error | A missing salary or logo shouldn't cost the other 200 jobs: absent fields become `"Not available"`, stale cards are skipped, a hung description panel logs and moves on. The run only fails (exit 1) when *nothing* was scraped. |
-| **JS-injected clicks + human-ish delays** | Native `.click()`, no sleeps | Overlays cause `ElementClickInterceptedException`; `scrollIntoView` + JS click sidesteps it. Fixed 2–10s waits pace requests below bot-detection thresholds — crude but effective rate limiting for a once-daily, single-account workload. |
+| **Playwright + persistent Chromium profile** | Selenium (previous); requests + internal API | Auto-waiting removes fixed sleeps (the old run spent ~30s/page sleeping); request interception blocks images/fonts/media for 2–3× faster loads; bundled browser ends chromedriver/Chrome version mismatches; trace viewer gives replayable post-mortems of 10pm cron runs. Persistent profile removes the per-run login and the headless-2FA failure mode entirely. |
+| **Logged-in scraping** | Guest/logged-out ("unbiased") | Personalization affects ranking, not set membership — scraping *all* pages of the past-24h window makes ordering moot. Guest sessions get authwalled within pages and lose every Premium field (applicant counts, seniority/education mix, company growth/tenure). |
+| **SQLite as local system of record** | Stateless (previous); load all past CSVs per run | ~100 lines on stdlib `sqlite3`, one file. Powers incremental scraping (the biggest speed win: known jobs skip their 5–10s detail visit), `first_seen`/`last_seen`/`times_seen` tracking, and per-job commit = crash resumability. S3/HF stay as export sinks with unchanged contracts. |
+| **Two-phase harvest → detail** | Click-through in the results pane (previous) | Card list gives ids + light fields cheaply; `/jobs/view/{id}` is a direct, stateless URL per job — no fragile in-pane clicking, trivially resumable, and the diff happens *between* phases so unchanged jobs cost nothing. |
+| **URL-driven search + `f_TPR` time filter** | Typing queries, clicking Next (previous) | Keywords, past-24h filter, and `start=` pagination are all query params on `/jobs/search-results/` (verified live). Daily past-24h window + cross-run dedup ≈ complete coverage with minimal pages. |
+| **Anchor on `componentkey` attributes** | CSS classes / XPath | Class names are obfuscated and rotate; `job-card-component-ref-{id}` and `JobDetails_*_{id}` are stable and carry the job id. Verified still intact on the current UI (2026-07). |
+| **Missing = NULL + completeness metrics** | "Not available" sentinels (previous) | Typed NULLs keep downstream analysis honest; the per-run completeness report turns silent parser breakage (LinkedIn UI change) into a visible number drop the next morning. |
+| **Local launchd, no cloud runtime** | ECS Fargate + EventBridge (previous) | A once-daily browser job doesn't need cloud orchestration; the persistent login session lives naturally on one machine; zero infra cost/maintenance. AWS remains only as a data sink (S3) + secret store (SSM for the HF token). |
 
 ## Repository Layout
 
 | Path | Responsibility |
 |---|---|
-| `src/scrape.py` | Entire pipeline: driver setup, login, search, pagination/extraction, S3 + HF publishing. Single file by design — one deployable unit, no internal API to version. |
-| `Dockerfile` | `python:3.10-slim` + Debian `chromium`/`chromium-driver`; entrypoint runs the scraper. |
-| `scripts/push_to_ecr.sh` | Build (linux/amd64) and push the image to ECR; creates the repo if absent. |
-| `scripts/setup_ecs_schedule.sh` | Idempotent provisioning: ECS cluster, CloudWatch log group, task definition, EventBridge schedule (create or update). |
-| `scripts/run_daily.sh` | Local wrapper: activates `.venv`, sources `.env`, logs to `logs/scrape.log`. Suitable as a launchd/cron target. |
-| `infra/aws.env.example` | Template for all AWS deployment settings (account, roles, network, schedule). |
-| `hf_dataset_readme.md` | Dataset card synced to HF Hub on every push. |
+| `src/main.py` | Entrypoint + orchestration: `login` \| `scrape` \| `export` \| `stats` |
+| `src/config.py` | Env vars + defaults (queries, window, caps, paths) |
+| `src/browser.py` | Playwright persistent context, request blocking, login check, tracing |
+| `src/crawler.py` | All LinkedIn DOM access — Phase A card harvesting + Phase B `/jobs/view/{id}` section extraction via `componentkey` |
+| `src/parsers.py` | Pure text→field functions: card, top card, salary, insights, hiring team |
+| `src/schemas.py` | `Job` dataclass — the full record schema |
+| `src/store.py` | SQLite: `jobs` + `runs` tables, dedup, resumability, completeness metrics |
+| `src/export.py` | S3 CSV + HF split push (same naming as the original pipeline) |
+| `tests/` | Parser fixtures captured from the live site + store round-trip tests |
+| `scripts/run_daily.sh` | launchd/cron wrapper (venv + `.env` + logging) |
+| `infra/linkedin-scraper.plist.example` | launchd schedule template (daily 22:00) |
 
 ## Data Model
 
-Each row is one job posting observed at scrape time (`Job` dataclass, all strings):
+One row per job posting (`Job` dataclass → `jobs` table; missing values are NULL):
 
-| Field | Notes |
+| Group | Fields |
 |---|---|
-| `job_id` | LinkedIn's internal ID, extracted from `componentkey` — dedup key within a run |
-| `job_title` | Parsed from the card's `aria-label` (only stable title source) |
-| `company_name`, `location`, `salary` | Positional parse of card text; `salary` filtered against metadata keywords ("promoted", "· ago", …) |
-| `logo_url` | Company logo image URL |
-| `job_description` | Full text of the "About the job" panel |
-| `scrape_dt` | UTC run timestamp `YYYY-MM-DD-HH-MM` — the snapshot/version key |
+| Identity | `job_id` (PK), `job_url`, `search_query`, `scrape_dt` |
+| Core | `job_title`, `company_name`, `location`, `workplace_type` (Remote/Hybrid/On-site), `employment_type`, `job_description`, `logo_url`, `verified_job` |
+| Salary | `salary_raw`, `salary_min`, `salary_max`, `salary_period` — parsed from card and/or description |
+| Posting meta | `posted_age_text`, `posted_at_estimate`, `is_reposted`, `is_promoted`, `apply_type` (easy/external), `applicants_clicked`, `benefits` |
+| Company | `about_company`, `company_headcount`, `headcount_growth_2y`, `median_tenure` |
+| Applicant insights (Premium) | `applicants_total`, `applicants_past_day`, `seniority_dist` (JSON), `education_dist` (JSON) |
+| People | `hiring_team` (JSON: name + title) |
+| Store meta | `first_seen`, `last_seen`, `times_seen` |
 
-**Storage layout**
-- S3: `s3://<bucket>/data/linkedin-scrape_<scrape_dt>.csv` — one file per run, never overwritten
-- HF Hub: one split per run (`scrape_dt` with `_`), parquet; dataset card defines train/test globs by year
-- License: BigScience OpenRAIL-M — research/educational use only
+**Exports** (unchanged contracts): S3 `{S3_PREFIX}/linkedin-scrape_{ts}.csv`; HF one split per run (`ts` with underscores), dataset card synced from `hf_dataset_readme.md`. License: BigScience OpenRAIL-M — research/educational use.
 
 ## Configuration
 
-**Environment variables** (see `.env.example`)
+`.env` (see `.env.example`):
 
-| Var | Purpose |
-|---|---|
-| `SSM_REGION` | Region for SSM Parameter Store lookups (required) |
-| `S3_PREFIX` | S3 output prefix, e.g. `s3://<bucket>/data` (required) |
-| `HF_REPO_ID` | Target HF dataset repo (required) |
-| `CHROMEDRIVER_PATH`, `CHROME_BINARY` | Browser binary overrides (set by the Dockerfile; optional locally) |
+| Var | Purpose | Default |
+|---|---|---|
+| `SCRAPE_QUERIES` | Search queries, `;`-separated (queries may contain commas) | ML scientist/engineer + data scientist |
+| `TIME_WINDOW` | `f_TPR` filter: `r86400` = 24h, `r604800` = week, empty = all | `r86400` |
+| `MAX_PAGES` | Result pages per query (25 jobs/page) | `10` |
+| `MAX_DETAIL_VISITS` | Per-run cap on detail-page visits (rate hygiene) | `300` |
+| `S3_PREFIX` | S3 output prefix (export only) | — |
+| `HF_REPO_ID` | HF dataset repo (export only) | — |
+| `SSM_REGION` | Region for the `hf_hub_access_token` SSM parameter | `us-west-2` |
+| `DB_PATH` / `PROFILE_DIR` | SQLite file / Chromium profile dir | `data/jobs.db`, `chrome_user_data/` |
 
-**SSM SecureString parameters** (created once, out of band): `linkedin_user`, `linkedin_pwd`, `hf_hub_access_token`.
-
-**CLI flags**: `-p/--prompt` (search query), `-n/--num-pages` (default 10), `--headless`/`--no-headless`, `--driver-path`, `--chrome-binary`.
+Exit codes: `0` ok · `1` zero cards (selector tripwire) · `2` session expired (both also fire a macOS notification).
 
 ## Running Locally
 
 ```bash
-cp .env.example .env        # fill in SSM_REGION, S3_PREFIX, HF_REPO_ID
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium
+cp .env.example .env    # fill in S3_PREFIX / HF_REPO_ID for exports
 
-# one-off run with a visible browser (handy for 2FA and debugging)
-set -a; source .env; set +a
-python src/scrape.py --no-headless -n 2
-
-# or via the wrapper (used for scheduled local runs, logs to logs/scrape.log)
-./scripts/run_daily.sh
+python src/main.py login                                       # one-time: log in (incl. 2FA); session persists
+python src/main.py scrape --headed --max-pages 2 --no-export   # watch a small dry run live
+python src/main.py scrape --window r604800                     # first real run: seed with past week
+python src/main.py stats                                       # store overview
+python src/main.py export --date 2026-07-18                    # re-export a day on demand
 ```
 
-AWS credentials with SSM read + S3 write access must be available (`aws configure`). For recurring local runs, point launchd/cron at `scripts/run_daily.sh`.
+AWS credentials (`aws configure`) are needed only for exports (S3 write + SSM read of the HF token).
 
-## Deploying to AWS
+**Schedule it:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
 
-1. **Prerequisites** — AWS CLI v2, Docker, `aws configure`; IAM roles:
-   - task execution role (`ECS_TASK_EXEC_ROLE_ARN`) — pull from ECR, write logs
-   - task role (`ECS_TASK_ROLE_ARN`) — `ssm:GetParameter`, `kms:Decrypt`, `s3:PutObject`
-   - scheduler role (`SCHEDULER_ROLE_ARN`) — `ecs:RunTask`, `iam:PassRole`
-2. **Configure** — `cp infra/aws.env.example infra/aws.env` and fill in account, roles, subnets, security groups, schedule.
-3. **Ship the image** — `./scripts/push_to_ecr.sh infra/aws.env`
-4. **Provision task + schedule** — `./scripts/setup_ecs_schedule.sh infra/aws.env` (idempotent; re-run to update). Default schedule: `cron(0 18 * * ? *)` in `America/Los_Angeles`, task sized 1 vCPU / 5 GB.
-5. **Operate** — logs in the CloudWatch group from `LOG_GROUP`; ad-hoc run via `aws ecs run-task` against the registered task definition.
-
-## Limitations & Future Work
-
-- **No automated tests / CI** — DOM-dependent logic is hard to unit test meaningfully; the honest next step is recorded-page fixtures for the parsers plus a smoke test in CI.
-- **Brittle to major LinkedIn redesigns** — `componentkey` anchoring survives class-name churn, but a structural redesign (it has happened) requires selector updates. Zero-jobs exit code is the current tripwire; alerting on task failure would shorten detection.
-- **2FA in headless cloud runs** — the 120s challenge window is only actionable in local visible-browser mode; a cloud run hitting a checkpoint fails that day's snapshot. Session-cookie persistence would remove most re-logins.
-- **No cross-run dedup or retention** — by design at the pipeline level, but consumer-side dedup helpers and an S3 lifecycle policy are cheap wins.
-- **Single account, fixed pacing** — throughput caps at ~10 pages/day; scaling means smarter scheduling, not parallel accounts (ToS risk).
-- **Downstream ML** — description parsing (skills/keyword extraction) has been prototyped with RAG offline; productionizing it is the natural next stage of the pipeline.
+**Run tests:** `pytest` — parsers are validated against text fixtures captured from the live site, so LinkedIn layout changes can be fixed by updating a fixture and re-running.
