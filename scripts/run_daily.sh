@@ -30,8 +30,9 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 cd "$PROJECT_DIR"
-python3 src/main.py scrape "$@"
+# `|| EXIT_CODE=$?` keeps set -e from aborting before the footer logs on failure
+EXIT_CODE=0
+python3 src/main.py scrape "$@" || EXIT_CODE=$?
 
-EXIT_CODE=$?
 echo "===== Scraper finished at $(date -u '+%Y-%m-%d %H:%M:%S UTC') (exit $EXIT_CODE) ====="
 exit $EXIT_CODE
