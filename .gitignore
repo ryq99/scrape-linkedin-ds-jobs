@@ -1,31 +1,31 @@
-.DS_Store
-*.pkl
-*.log
-**/*.json
-**/*.env
-logs/
-infra/*.plist
-
-text*
-tensorflow*
-
-.ipynb_checkpoints
-**/notebook/
-**/data/
-**/driver/
-**/config.yml
-**/*.zip
-**/*.csv
-
-bazel
-src/scrape_dev.py
-
-**/.venv
-src/test_cookie.py
-**/__pycache__/
-**/chrome_user_data/
-install_chrome_driver.sh
+# secrets & env
 **/.env
+**/*.env
+
+# scraper state (session, database, logs)
+**/chrome_user_data/
+**/data/
+*.db
+logs/
+*.log
+
+# local-only tools & experiments
 app.py
+**/notebook/
+**/driver/
 CLAUDE.md
 
+# python
+**/__pycache__/
+**/.venv
+.pytest_cache/
+.ipynb_checkpoints
+
+# local exports / dumps
+**/*.csv
+**/*.json
+**/*.zip
+
+# macOS & scheduling
+.DS_Store
+infra/*.plist
