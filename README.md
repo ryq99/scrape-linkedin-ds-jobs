@@ -1,41 +1,26 @@
 # LinkedIn Job Scraper
 
-A lightweight, production-grade Job scraping pipeline for data science / machine learning jobs on LinkedIn
+A lightweight Job scraping pipeline for data science / machine learning jobs on LinkedIn
 
 ## Where to Find the Data
 **Huggingface**: [`ryang2/linkedin-job-scrape`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape) on Hugging Face Hub
 
 ## Problem & Requirements
 
-**Goal:** build a continuously growing, analysis-ready dataset of DS/ML job postings with the most complete schema the LinkedIn UI exposes — without manual effort.
+**Goal:** build a continuously growing, analysis-ready dataset of DS/ML job postings with the most complete and up-to-date schema from LinkedIn UI.
 
 **Functional requirements**
-- Scrape configurable search queries daily; capture card metadata, full descriptions, and every detail-page field available (salary, applicant insights, company insights, hiring team)
-- Deduplicate across runs: never re-scrape a known job; track when each posting was first/last seen
+- Scrape daily; capture card metadata, full descriptions, and every detail-page field available (salary, applicant insights, company insights, hiring team)
+- Dedup across runs: never re-scrape a known job; track when each posting was first/last seen
 - Persist locally (SQLite) and publish daily snapshots (S3 CSV + HF split)
 
 **Non-functional requirements**
-- Fast: minutes per run, not tens of minutes — incremental visits, no fixed sleeps, blocked images/fonts
-- Unattended on a laptop: persistent login session (no per-run login/2FA), resumable after crash/sleep
+- Fast: less than 10 minutes per run — incremental visits, no fixed sleeps, blocked images/fonts
+- Unattended on laptop: persistent login session (no per-run login/2FA), resumable after crash/sleep
 - Data quality as a feature: typed schema, missing = NULL, per-field completeness metrics logged every run, parsers unit-tested against captured fixtures
 - Resilient to LinkedIn DOM churn: anchor on stable `componentkey` attributes, tripwire exit codes, Playwright traces for post-mortem
 
 ## Architecture
-
-### System view
-
-```mermaid
-flowchart LR
-    LD[launchd<br/>daily 22:00] --> M["main.py scrape"]
-    M -->|Playwright,<br/>persistent session| LI[linkedin.com]
-    M <-->|"seen? / upsert"| DB[(SQLite<br/>data/jobs.db)]
-    DB --> EX[export.py]
-    EX --> S3[(S3 CSV snapshot)]
-    EX --> HF[(HF Hub dataset)]
-    CP[chrome_user_data/<br/>login cookie] -.-> M
-```
-
-### Run workflow
 
 ```mermaid
 flowchart TD
@@ -94,20 +79,24 @@ flowchart TD
 
 ## Data Model
 
-One row per job posting (`Job` dataclass → `jobs` table; missing values are NULL):
+One row per job posting (`Job` dataclass → `jobs` table; missing values are NULL). The **Access** column marks where a field comes from: `Public` = visible without an account, `Login` = only visible signed in, `Premium` = requires a Premium subscription.
 
-| Group | Fields |
-|---|---|
-| Identity | `job_id` (PK), `job_url`, `search_query`, `scrape_dt` |
-| Core | `job_title`, `company_name`, `location`, `workplace_type` (Remote/Hybrid/On-site), `employment_type`, `job_description`, `logo_url`, `verified_job` |
-| Salary | `salary_raw`, `salary_min`, `salary_max`, `salary_period` — parsed from card and/or description |
-| Posting meta | `posted_age_text`, `posted_at_estimate`, `is_reposted`, `is_promoted`, `apply_type` (easy/external), `applicants_clicked`, `benefits` |
-| Company | `about_company`, `company_headcount`, `headcount_growth_2y`, `median_tenure` |
-| Applicant insights (Premium) | `applicants_total`, `applicants_past_day`, `seniority_dist` (JSON), `education_dist` (JSON) |
-| People | `hiring_team` (JSON: name + title) |
-| Store meta | `first_seen`, `last_seen`, `times_seen` |
+| Group | Access | Fields |
+|---|---|---|
+| Identity | Public | `job_id` (PK), `job_url`, `search_query`, `scrape_dt` |
+| Core | Public | `job_title`, `company_name`, `location`, `workplace_type` (Remote/Hybrid/On-site), `employment_type`, `job_description`, `logo_url`, `verified_job` |
+| Salary | Public | `salary_raw`, `salary_min`, `salary_max`, `salary_period` — parsed from card and/or description |
+| Posting meta | Public | `posted_age_text`, `posted_at_estimate`, `is_reposted`, `benefits` |
+| Posting meta | Login | `is_promoted`, `apply_type` (easy/external), `applicants_clicked` |
+| Company | Public | `about_company` |
+| Company insights | Premium | `company_headcount`, `headcount_growth_2y`, `median_tenure` |
+| Applicant insights | Premium | `applicants_total`, `applicants_past_day`, `seniority_dist` (JSON), `education_dist` (JSON) |
+| People | Login | `hiring_team` (JSON: name + title) |
+| Store meta | Derived | `first_seen`, `last_seen`, `times_seen` |
 
-**Exports** (unchanged contracts): S3 `{S3_PREFIX}/linkedin-scrape_{ts}.csv`; HF one split per run (`ts` with underscores), dataset card synced from `hf_dataset_readme.md`. License: BigScience OpenRAIL-M — research/educational use.
+**Privacy rule:** `Login` and `Premium` fields are gathered through a personal account and are personalized/gated — they stay in the local SQLite store and the private S3 snapshots only, and are **excluded from the public Hugging Face dataset** (`PRIVATE_FIELDS` in `src/schemas.py`, applied by `public_view()` in `src/export.py`).
+
+**Exports**: S3 `{S3_PREFIX}/linkedin-scrape_{ts}.csv` (full schema, private bucket); HF one split per run (`ts` with underscores, **public fields only**), dataset card synced from `hf_dataset_readme.md`. License: BigScience OpenRAIL-M — research/educational use.
 
 ## Configuration
 
@@ -143,6 +132,6 @@ python src/main.py export --date 2026-07-18                    # re-export a day
 
 AWS credentials (`aws configure`) are needed only for exports (S3 write + SSM read of the HF token).
 
-**Schedule it:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
+**Schedule:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
 
 **Run tests:** `pytest` — parsers are validated against text fixtures captured from the live site, so LinkedIn layout changes can be fixed by updating a fixture and re-running.

@@ -1,9 +1,7 @@
-tqdm
+playwright
 pandas
-selenium
-webdriver_manager
 boto3
-s3fs
 awswrangler
 datasets
 huggingface_hub
+pytest
