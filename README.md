@@ -162,10 +162,3 @@ AWS credentials (`aws configure`) are needed only for exports (S3 write + SSM re
 **Schedule:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
 
 **Run tests:** `pytest` — parsers are validated against text fixtures captured from the live site, so LinkedIn layout changes can be fixed by updating a fixture and re-running.
-
-## Responsible Use
-
-- **Rate hygiene is built in**: once-daily runs, incremental visits (known jobs are never re-fetched), a per-run detail-visit cap (`MAX_DETAIL_VISITS`), and jittered delays between page loads.
-- **Personal-data boundary**: fields gathered through a logged-in/Premium session are personalized and gated — they never leave the local store and private S3 bucket, and are excluded from the public dataset (see the [Privacy rule](#data-model)).
-- **Terms of service**: automated collection may conflict with LinkedIn's User Agreement. This project is provided for research and educational use; you are responsible for how you run it and for compliance with applicable terms and laws in your jurisdiction.
-- **Licensing**: the code is [MIT](LICENSE); the published dataset ships separately under BigScience OpenRAIL-M (research/educational use).
