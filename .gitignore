@@ -15,6 +15,10 @@ app.py
 **/driver/
 CLAUDE.md
 
+# one-time v1 backfill (local only; raw data preserved in S3 raw_v1/ + HF v1-schema tag)
+scripts/backfill_v1.py
+tests/test_backfill.py
+
 # python
 **/__pycache__/
 **/.venv

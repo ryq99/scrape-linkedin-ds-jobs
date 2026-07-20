@@ -3,30 +3,24 @@ configs:
 - config_name: default
   data_files:
   - split: train
-    path: "data/2026_*.parquet"
-- config_name: legacy
-  data_files:
-  - split: train
     path:
     - "data/2023_*.parquet"
     - "data/2024_*.parquet"
+    - "data/2025_*.parquet"
   - split: test
-    path: "data/2025_*.parquet"
+    path: "data/2026_*.parquet"
 license: bigscience-openrail-m
 ---
 
 # LinkedIn DS/ML Job Postings
 
-Daily snapshots of data science / machine learning job postings scraped from LinkedIn, one parquet file per scrape run.
+Daily snapshots of data science / machine learning job postings scraped from LinkedIn, one parquet file per scrape run. All splits share one schema (2023 → today); historical splits were migrated in 2026-07 — the original 8-column data is preserved at revision [`v1-schema`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape/tree/v1-schema).
 
-## Configs
-
-- **`default`** — 2026-07 onward, full schema (columns inferred from the parquet files)
-- **`legacy`** — 2023–2025, original 8-column schema (`job_id`, `job_title`, `company_name`, `location`, `salary`, `logo_url`, `job_description`, `scrape_dt`)
+The same `job_id` recurs across splits (a posting stays live for days) — that's the longitudinal signal. For a unique-jobs view, dedup on `job_id` keeping the row with max `scrape_dt`.
 
 ## Data & Privacy
 
-Publicly visible posting fields only: title, company, location, description, salary where posted. Fields that are login-gated or Premium-gated on LinkedIn (applicant statistics, company insights, hiring-team contacts) are never published. Missing values are NULL, not sentinel strings.
+Publicly visible posting fields only: title, company, location, description, salary where posted. Fields that are login-gated or Premium-gated on LinkedIn (applicant statistics, company insights, hiring-team contacts) are never published. Missing values are NULL, not sentinel strings; fields not observable historically are NULL in pre-2026-07 splits.
 
 ## License & Use
 
