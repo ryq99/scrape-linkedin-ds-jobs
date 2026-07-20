@@ -1,9 +1,36 @@
-# LinkedIn Job Scraper
+# LinkedIn Jobs Scraper
 
-A lightweight Job scraping pipeline for data science / machine learning jobs on LinkedIn
+[![CI](https://github.com/ryq99/linkedin-jobs-scraper/actions/workflows/ci.yml/badge.svg)](https://github.com/ryq99/linkedin-jobs-scraper/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![HF Dataset](https://img.shields.io/badge/%F0%9F%A4%97%20Dataset-linkedin--job--scrape-yellow)](https://huggingface.co/datasets/ryang2/linkedin-job-scrape)
 
-## Where to Find the Data
-**Huggingface**: [`ryang2/linkedin-job-scrape`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape) on Hugging Face Hub
+A lightweight daily scraping pipeline for data science / machine learning jobs on LinkedIn — Playwright + SQLite, publishing an open dataset to the Hugging Face Hub.
+
+## What You Get
+
+One typed row per job posting — title, company, location, salary, full description, and every detail-page field LinkedIn exposes (see [Data Model](#data-model)). Real rows from the public dataset:
+
+| job_title | company_name | location | salary_min | salary_max |
+|---|---|---|---|---|
+| Senior Machine Learning Engineer | Pacific Northwest National Laboratory | Seattle, WA | 140,200 | 228,800 |
+| Applied ML Engineer - Media Search and Recommendation | Bloomberg | New York, NY | 165,000 | 260,000 |
+| Sr. MLE, Prime Video - Personalization and Discovery | Amazon | Seattle, WA | 151,300 | 261,500 |
+
+**Get the data without running anything**: [`ryang2/linkedin-job-scrape`](https://huggingface.co/datasets/ryang2/linkedin-job-scrape) on Hugging Face Hub — updated daily, one split per run.
+
+## Quick Start
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && playwright install chromium
+cp .env.example .env
+
+python src/main.py login                                       # one-time: log in (incl. 2FA); session persists
+python src/main.py scrape --headed --max-pages 2 --no-export   # watch a small dry run live
+```
+
+See [Running Locally](#running-locally) for exports, scheduling, and tests.
 
 ## Problem & Requirements
 
@@ -135,3 +162,10 @@ AWS credentials (`aws configure`) are needed only for exports (S3 write + SSM re
 **Schedule:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
 
 **Run tests:** `pytest` — parsers are validated against text fixtures captured from the live site, so LinkedIn layout changes can be fixed by updating a fixture and re-running.
+
+## Responsible Use
+
+- **Rate hygiene is built in**: once-daily runs, incremental visits (known jobs are never re-fetched), a per-run detail-visit cap (`MAX_DETAIL_VISITS`), and jittered delays between page loads.
+- **Personal-data boundary**: fields gathered through a logged-in/Premium session are personalized and gated — they never leave the local store and private S3 bucket, and are excluded from the public dataset (see the [Privacy rule](#data-model)).
+- **Terms of service**: automated collection may conflict with LinkedIn's User Agreement. This project is provided for research and educational use; you are responsible for how you run it and for compliance with applicable terms and laws in your jurisdiction.
+- **Licensing**: the code is [MIT](LICENSE); the published dataset ships separately under BigScience OpenRAIL-M (research/educational use).
