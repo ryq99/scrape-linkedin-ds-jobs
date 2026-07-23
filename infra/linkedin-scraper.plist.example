@@ -4,6 +4,13 @@
 <!--
   launchd schedule for the LinkedIn scraper.
 
+  IMPORTANT — launchd does NOT wake a sleeping Mac. StartCalendarInterval only
+  runs the job when the machine is already awake (or on its next wake). To wake
+  the Mac for the overnight run, install the daily wake ONCE:
+    sudo ./scripts/setup_wake_schedule.sh      # pmset repeat wake @ 21:58
+  The wrapper then runs the scrape under `caffeinate` (stays awake through the
+  upload) and, because of the --sleep-after arg below, sleeps the Mac when done.
+
   Install:
     cp infra/linkedin-scraper.plist.example ~/Library/LaunchAgents/com.<you>.linkedin-scraper.plist
     # edit the two /path/to/ds_jobs paths below, then:
@@ -19,9 +26,12 @@
     <array>
         <string>/bin/bash</string>
         <string>/path/to/ds_jobs/scripts/run_daily.sh</string>
+        <string>--sleep-after</string>
     </array>
 
-    <!-- Run daily at 10:00 pm; launchd runs it on wake if the machine was asleep -->
+    <!-- Fire daily at 10:00 pm. The Mac is woken at 21:58 by the pmset repeat
+         wake from setup_wake_schedule.sh (run that once); this only sets when
+         launchd runs the job, it does not wake the machine on its own. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
