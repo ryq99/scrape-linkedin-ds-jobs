@@ -43,7 +43,7 @@ See [Running Locally](#running-locally) for exports, scheduling, and tests.
 
 **Non-functional requirements**
 - Fast: less than 10 minutes per run — incremental visits, no fixed sleeps, blocked images/fonts
-- Unattended on laptop: persistent login session (no per-run login/2FA), resumable after crash/sleep
+- Unattended on laptop: persistent login session (no per-run login/2FA); scheduled runs self-wake the Mac (`pmset`), stay awake through upload (`caffeinate`), then sleep; resumable after crash/sleep
 - Data quality as a feature: typed schema, missing = NULL, per-field completeness metrics logged every run, parsers unit-tested against captured fixtures
 - Resilient to LinkedIn DOM churn: anchor on stable `componentkey` attributes, tripwire exit codes, Playwright traces for post-mortem
 
@@ -159,6 +159,12 @@ python src/main.py export --date 2026-07-18                    # re-export a day
 
 AWS credentials (`aws configure`) are needed only for exports (S3 write + SSM read of the HF token).
 
-**Schedule:** copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd runs the job at 22:00 daily (or on wake if the machine was asleep); output lands in `logs/scrape.log`. Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
+**Schedule (unattended overnight run):** three pieces, because launchd alone does *not* wake a sleeping Mac — it only runs the job once the machine is awake.
+
+1. **Wake** — install a daily hardware wake once: `sudo ./scripts/setup_wake_schedule.sh` (`pmset repeat wake` at 21:58; undo with `sudo pmset repeat cancel`, inspect with `pmset -g sched`).
+2. **Run** — copy `infra/linkedin-scraper.plist.example` to `~/Library/LaunchAgents/`, fix the two paths, `launchctl load` it. launchd fires `run_daily.sh --sleep-after` at 22:00; output lands in `logs/scrape.log`.
+3. **Stay awake, then sleep** — the wrapper runs the scrape under `caffeinate` so idle sleep can't kill it mid-run, then `--sleep-after` returns the Mac to sleep once the upload finishes (manual runs omit the flag, so they never sleep your machine).
+
+Failed runs save a Playwright trace to `logs/traces/` — inspect with `playwright show-trace <file>`.
 
 **Run tests:** `pytest` — parsers are validated against text fixtures captured from the live site, so LinkedIn layout changes can be fixed by updating a fixture and re-running.
