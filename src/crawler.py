@@ -11,6 +11,9 @@ import urllib.parse
 
 from playwright.sync_api import Page
 
+import config
+from watchdog import OperationTimeout, time_limit
+
 log = logging.getLogger("crawler")
 
 CARD_SELECTOR = 'div[role="button"][componentkey^="job-card-component-ref-"]'
@@ -73,14 +76,21 @@ def harvest_query(page: Page, query: str, window: str, max_pages: int) -> list[d
     """Paginate through a search query; returns deduped card records."""
     seen: dict[str, dict] = {}
     for page_num in range(max_pages):
-        page.goto(build_search_url(query, window, page_num * PAGE_SIZE), wait_until="domcontentloaded")
         try:
-            page.wait_for_selector(CARD_SELECTOR, timeout=15_000)
-        except Exception:
-            break  # no cards rendered = past the last page
-        page.evaluate(_SCROLL_LIST_JS)
-        page.wait_for_timeout(1_500)
-        cards = page.evaluate(_HARVEST_JS)
+            # Hard cap the whole page so a wedged driver (evaluate has no
+            # Playwright timeout of its own) can't hang harvesting.
+            with time_limit(config.HARVEST_PAGE_TIMEOUT, f"harvest {query!r} page {page_num + 1}"):
+                page.goto(build_search_url(query, window, page_num * PAGE_SIZE), wait_until="domcontentloaded")
+                try:
+                    page.wait_for_selector(CARD_SELECTOR, timeout=15_000)
+                except Exception:
+                    break  # no cards rendered = past the last page
+                page.evaluate(_SCROLL_LIST_JS)
+                page.wait_for_timeout(1_500)
+                cards = page.evaluate(_HARVEST_JS)
+        except OperationTimeout as e:
+            log.warning("%s — stopping pagination for this query", e)
+            break
         log.info("query=%r page=%d cards=%d", query, page_num + 1, len(cards))
         new = [c for c in cards if c["job_id"] not in seen]
         if not new:
@@ -95,10 +105,17 @@ def job_url(job_id: str) -> str:
 
 def extract_sections(page: Page, job_id: str) -> dict:
     """Raw innerText per section + top_card (None where a section is absent,
-    e.g. Premium sections without a subscription)."""
-    page.goto(job_url(job_id), wait_until="domcontentloaded")
-    page.wait_for_selector(f'[componentkey^="{SECTION_PREFIXES["about_job"]}"]', timeout=15_000)
-    for _ in range(4):  # progressive scroll triggers lazy sections (AboutTheCompany, insights)
-        page.mouse.wheel(0, 1_500)
-        page.wait_for_timeout(400)
-    return page.evaluate(_COLLECT_SECTIONS_JS, SECTION_PREFIXES)
+    e.g. Premium sections without a subscription).
+
+    The whole visit is wrapped in a SIGALRM hard cap: `page.evaluate` has no
+    Playwright timeout, so a wedged driver would otherwise block forever here
+    (the 100/300 hang). OperationTimeout surfaces to the per-job retry in
+    main.scrape_details, so one bad job is skipped rather than freezing the run.
+    """
+    with time_limit(config.DETAIL_VISIT_TIMEOUT, f"detail visit {job_id}"):
+        page.goto(job_url(job_id), wait_until="domcontentloaded")
+        page.wait_for_selector(f'[componentkey^="{SECTION_PREFIXES["about_job"]}"]', timeout=15_000)
+        for _ in range(4):  # progressive scroll triggers lazy sections (AboutTheCompany, insights)
+            page.mouse.wheel(0, 1_500)
+            page.wait_for_timeout(400)
+        return page.evaluate(_COLLECT_SECTIONS_JS, SECTION_PREFIXES)

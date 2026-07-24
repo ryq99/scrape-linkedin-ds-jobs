@@ -14,6 +14,7 @@ import crawler
 import export
 import parsers
 import store
+import watchdog
 from schemas import Job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
@@ -48,10 +49,11 @@ def cmd_login() -> int:
 
 # --- scrape: Phase A (harvest) → diff → Phase B (details) → export ----------
 
-def harvest_cards(page, args) -> dict[str, dict]:
+def harvest_cards(page, args, deadline: watchdog.Deadline) -> dict[str, dict]:
     """Phase A: collect unique cards across all queries, keyed by job_id."""
     cards: dict[str, dict] = {}
     for query in ([args.query] if args.query else config.SCRAPE_QUERIES):
+        deadline.check("harvest")
         for card in crawler.harvest_query(page, query, args.window, args.max_pages):
             cards.setdefault(card["job_id"], card)
     return cards
@@ -85,13 +87,15 @@ def build_job(job_id: str, card: dict, sections: dict, run_dt: datetime, ts: str
     )
     return Job(**{k: v for k, v in fields.items() if k in Job.__dataclass_fields__})
 
-def scrape_details(page, conn, cards: dict[str, dict], new_ids: list[str], run_dt: datetime, ts: str) -> None:
+def scrape_details(page, conn, cards: dict[str, dict], new_ids: list[str], run_dt: datetime, ts: str,
+                   deadline: watchdog.Deadline) -> None:
     """Phase B: visit each new job's page. Commit per job, so a crash resumes."""
     todo = new_ids[: config.MAX_DETAIL_VISITS]
     for i, job_id in enumerate(todo, 1):
+        deadline.check(f"details {i}/{len(todo)}")
         for attempt in (1, 2):
             try:
-                sections = crawler.extract_sections(page, job_id)
+                sections = crawler.extract_sections(page, job_id)  # hard-capped per visit
                 store.upsert_job(conn, build_job(job_id, cards[job_id], sections, run_dt, ts))
                 break
             except Exception as e:
@@ -108,6 +112,7 @@ def cmd_scrape(args) -> int:
     log.info("Run %s | %d jobs already in store", ts, len(known))
 
     pw, context, page = browser.launch(headless=not args.headed)
+    deadline = watchdog.Deadline(config.MAX_RUN_SECONDS)
     status, cards, new_ids = "failed", {}, []
     try:
         browser.start_trace(context)
@@ -115,7 +120,7 @@ def cmd_scrape(args) -> int:
             notify("LinkedIn session expired — run: python src/main.py login")
             return EXIT_NOT_LOGGED_IN
 
-        cards = harvest_cards(page, args)
+        cards = harvest_cards(page, args, deadline)
         if not cards:
             log.error("Zero cards harvested — selectors may have broken")
             notify("Scrape failed: zero job cards found")
@@ -124,8 +129,14 @@ def cmd_scrape(args) -> int:
         new_ids = [jid for jid in cards if jid not in known]
         store.touch_last_seen(conn, [jid for jid in cards if jid in known], ts)
         log.info("Harvested %d cards: %d new, %d already known", len(cards), len(new_ids), len(cards) - len(new_ids))
-        scrape_details(page, conn, cards, new_ids, run_dt, ts)
+        scrape_details(page, conn, cards, new_ids, run_dt, ts, deadline)
         status = "ok"
+    except watchdog.RunAborted as e:
+        # Wall-clock backstop tripped (wedged/slow browser). Fail fast: the
+        # finally below still records the run + trace, and per-job commits mean
+        # everything scraped so far is already persisted and gets exported.
+        log.error("Run aborted by watchdog: %s", e)
+        notify(f"Scrape aborted: {e}")
     finally:
         if status == "ok":  # keep the trace only for failed runs — the cron post-mortem
             browser.discard_trace(context)
