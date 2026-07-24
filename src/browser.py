@@ -30,6 +30,10 @@ def launch(headless: bool = True, block_resources: bool = True):
         viewport={"width": 1440, "height": 900},
         args=["--disable-blink-features=AutomationControlled"],
     )
+    # Bound slow-but-alive pages at the Playwright layer; watchdog.time_limit is
+    # the harder backstop for a wedged driver (which ignores these).
+    context.set_default_navigation_timeout(30_000)
+    context.set_default_timeout(20_000)
     if block_resources:
         context.route("**/*", _block_heavy_resources)
     page = context.pages[0] if context.pages else context.new_page()

@@ -15,6 +15,11 @@ MAX_PAGES = int(os.getenv("MAX_PAGES", "10"))
 MAX_DETAIL_VISITS = int(os.getenv("MAX_DETAIL_VISITS", "300"))  # per-run cap (rate hygiene)
 DETAIL_DELAY_RANGE = (2.0, 5.0)  # jittered seconds between detail-page visits
 
+# --- watchdog: never let a wedged browser hang the run (see watchdog.py) -----
+MAX_RUN_SECONDS = int(os.getenv("MAX_RUN_SECONDS", "1800"))      # whole-run wall-clock cap (30 min)
+DETAIL_VISIT_TIMEOUT = int(os.getenv("DETAIL_VISIT_TIMEOUT", "90"))  # per detail-page hard cap
+HARVEST_PAGE_TIMEOUT = int(os.getenv("HARVEST_PAGE_TIMEOUT", "60"))  # per search-results page hard cap
+
 # --- paths ------------------------------------------------------------------
 DB_PATH = Path(os.getenv("DB_PATH", PROJECT_DIR / "data" / "jobs.db"))
 PROFILE_DIR = Path(os.getenv("PROFILE_DIR", PROJECT_DIR / "chrome_user_data"))
